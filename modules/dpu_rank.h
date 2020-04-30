@@ -7,6 +7,7 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/sizes.h>
+#include <linux/types.h>
 
 #include "dpu_region.h"
 
@@ -64,6 +65,8 @@ struct dpu_rank {
 	uint32_t clock_division_min;
 	uint32_t clock_division_max;
 
+	uint8_t rank_index;
+
 	char part_number[20]; /* e.g UPMEM-E19 */
 	char serial_number[10];
 };
@@ -72,6 +75,7 @@ extern struct class *dpu_rank_class;
 
 int dpu_rank_create_devices(struct device *dev, struct dpu_region *region);
 void dpu_rank_release_devices(struct dpu_region *region);
+void dpu_rank_probe_mcu(struct dpu_rank *rank);
 
 extern const struct attribute_group *dpu_rank_attrs_groups[];
 

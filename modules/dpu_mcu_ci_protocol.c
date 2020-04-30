@@ -277,7 +277,7 @@ static int dpu_control_interface_prepare_read_response(struct dpu_rank *rank,
 
 	/* make room for host command V3 protocol header */
 	resp_len = insize + sizeof(rs);
-	resp_buf = kzalloc(resp_len, GFP_KERNEL);
+	resp_buf = kzalloc(CI_MAX_MSG_SIZE, GFP_KERNEL);
 	if (!resp_buf)
 		return -EC_RES_ERROR;
 	/* Read answer */
@@ -338,21 +338,32 @@ done:
 	return r;
 }
 
+#define MCU_COMMAND_TRIES 2
 int dpu_control_interface_mcu_command(struct dpu_rank *rank, int command,
 				      int version, const void *outdata,
 				      int outsize, void *indata, int insize)
 {
 	int r;
-	uint32_t id = prandom_u32();
+	int tries = 0;
 
-	r = dpu_control_interface_build_send_command(rank, id, command, version,
-						     outdata, outsize);
-	if (r < 0)
-		return r;
-	r = dpu_control_interface_prepare_read_response(rank, id, indata,
-							insize);
-	if (r < 0)
-		return r;
+	do {
+		uint32_t id = prandom_u32();
 
-	return 0;
+		r = dpu_control_interface_build_send_command(
+			rank, id, command, version, outdata, outsize);
+		if (r < 0)
+			continue;
+		r = dpu_control_interface_prepare_read_response(rank, id,
+								indata, insize);
+		if (!r)
+			/* Request/response exchange completed successfully */
+			return 0;
+		/*
+		 *  the USB initialization might be on-going
+		 *  and loading the MCU.
+		*/
+		msleep(200);
+	} while (++tries < MCU_COMMAND_TRIES);
+
+	return r;
 }

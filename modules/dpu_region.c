@@ -120,8 +120,8 @@ static int mdd_dax_pmd_huge_fault(struct vm_fault *vmf, void *vaddr)
 		PMD_MASK;
 	pfn = phys_to_pfn_t(paddr, PFN_DEV | PFN_MAP);
 
-	pr_info("Mapping pages of size %lx at @v=%llx to @p=%llx\n", PMD_SIZE,
-		(uint64_t)vaddr, paddr);
+	pr_debug("Mapping pages of size %lx at @v=%llx to @p=%llx\n", PMD_SIZE,
+		 (uint64_t)vaddr, paddr);
 
 #if LINUX_VERSION_CODE == KERNEL_VERSION(4, 15, 18) ||                         \
 	LINUX_VERSION_CODE > KERNEL_VERSION(4, 19, 37)
@@ -146,8 +146,8 @@ static int mdd_dax_pte_huge_fault(struct vm_fault *vmf, void *vaddr)
 		PAGE_MASK;
 	pfn = phys_to_pfn_t(paddr, PFN_DEV | PFN_MAP);
 
-	pr_info("Mapping pages of size %lx at @v=%llx to @p=%llx\n", PAGE_SIZE,
-		(uint64_t)vaddr, paddr);
+	pr_debug("Mapping pages of size %lx at @v=%llx to @p=%llx\n", PAGE_SIZE,
+		 (uint64_t)vaddr, paddr);
 
 #if LINUX_VERSION_CODE == KERNEL_VERSION(4, 15, 18) ||                         \
 	LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)
@@ -166,9 +166,9 @@ static int mdd_dax_huge_fault(struct vm_fault *vmf,
 	void *vaddr = vmf->virtual_address;
 #endif
 
-	pr_info("%s: %s (%#lx - %#lx) size = %d\n", current->comm,
-		(vmf->flags & FAULT_FLAG_WRITE) ? "write" : "read",
-		vmf->vma->vm_start, vmf->vma->vm_end, pe_size);
+	pr_debug("%s: %s (%#lx - %#lx) size = %d\n", current->comm,
+		 (vmf->flags & FAULT_FLAG_WRITE) ? "write" : "read",
+		 vmf->vma->vm_start, vmf->vma->vm_end, pe_size);
 
 	switch (pe_size) {
 	case PE_SIZE_PTE:
@@ -274,7 +274,7 @@ static unsigned long mdd_dax_get_unmapped_area(struct file *filp,
 {
 	unsigned long addr_align = 0;
 
-	pr_info("%s: Looking for region of size %lu", __func__, len);
+	pr_debug("%s: Looking for region of size %lu", __func__, len);
 
 	addr_align = current->mm->get_unmapped_area(filp, addr, len + SZ_1G,
 						    pgoff, flags);
@@ -474,7 +474,7 @@ static int dpu_region_mem_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct dpu_region *region;
 	struct dpu_region_data *pdata;
-	int ret;
+	int ret, i;
 
 	dev_dbg(dev, "device probed\n");
 
@@ -530,6 +530,12 @@ static int dpu_region_mem_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(dev, "cannot get region chip id\n");
 		goto destroy_rank_devices;
+	}
+
+	/* Should be called after doing the byte/bit ordering */
+	for (i = 0; i < region->nb_ranks; ++i) {
+		struct dpu_rank *rank = &region->ranks[i];
+		dpu_rank_probe_mcu(rank);
 	}
 
 	dev_dbg(dev, "device loaded.\n");
@@ -1124,7 +1130,7 @@ kc705_error:
 
 static void __exit dpu_region_exit(void)
 {
-	pr_info("dpu_region: unloading driver\n");
+	pr_debug("dpu_region: unloading driver\n");
 
 	pci_unregister_driver(&dpu_region_fpga_aws_driver);
 	pci_unregister_driver(&dpu_region_fpga_kc705_driver);

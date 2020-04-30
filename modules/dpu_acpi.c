@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright 2020 UPMEM. All rights reserved. */
 #include <linux/dmi.h>
+#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/slab.h>
 
@@ -150,3 +151,5 @@ void dpu_region_free_data(struct dpu_region_data *region_data)
 	kfree(region_data->addr_translate);
 	kfree(region_data);
 }
+
+MODULE_ALIAS("dmi:*:svnUPMEM:*");

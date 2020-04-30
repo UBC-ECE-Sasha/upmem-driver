@@ -6,6 +6,8 @@
 
 #include "dpu_rank.h"
 #include "dpu_control_interface.h"
+#include "dpu_mcu_ci_commands.h"
+#include "dpu_mcu_ci_protocol.h"
 
 /* dpu_rank attributes */
 static ssize_t is_owned_show(struct device *dev, struct device_attribute *attr,
@@ -89,6 +91,14 @@ static ssize_t clock_division_max_show(struct device *dev,
 	return sprintf(buf, "%u\n", rank->clock_division_max);
 }
 
+static ssize_t rank_index_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct dpu_rank *rank = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%u\n", rank->rank_index);
+}
+
 static ssize_t part_number_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -105,6 +115,28 @@ static ssize_t serial_number_show(struct device *dev,
 	return sprintf(buf, "%s\n", rank->serial_number);
 }
 
+static ssize_t signal_led_store(struct device *dev,
+				struct device_attribute *attr, const char *buf,
+				size_t len)
+{
+	struct dpu_rank *rank = dev_get_drvdata(dev);
+	struct ec_params_signal signal;
+	int ret;
+
+	ret = kstrtou8(buf, 10, &signal.on_off);
+	if (ret)
+		return ret;
+
+	ret = dpu_control_interface_mcu_command(
+		rank, EC_CMD_DIMM_SIGNAL, 0, &signal, sizeof(signal), NULL, 0);
+	if (ret < 0) {
+		dev_warn(&rank->dev, "fail to send signal command to MCU\n");
+		return ret;
+	}
+
+	return len;
+}
+
 static DEVICE_ATTR_RO(is_owned);
 static DEVICE_ATTR_RO(usage_count);
 static DEVICE_ATTR_RO(id_in_region);
@@ -113,8 +145,10 @@ static DEVICE_ATTR_RO(mcu_version);
 static DEVICE_ATTR_RO(fck_frequency);
 static DEVICE_ATTR_RO(clock_division_min);
 static DEVICE_ATTR_RO(clock_division_max);
+static DEVICE_ATTR_RO(rank_index);
 static DEVICE_ATTR_RO(part_number);
 static DEVICE_ATTR_RO(serial_number);
+static DEVICE_ATTR_WO(signal_led);
 
 static struct attribute *dpu_rank_attrs[] = {
 	&dev_attr_is_owned.attr,
@@ -125,8 +159,10 @@ static struct attribute *dpu_rank_attrs[] = {
 	&dev_attr_fck_frequency.attr,
 	&dev_attr_clock_division_min.attr,
 	&dev_attr_clock_division_max.attr,
+	&dev_attr_rank_index.attr,
 	&dev_attr_part_number.attr,
 	&dev_attr_serial_number.attr,
+	&dev_attr_signal_led.attr,
 	NULL,
 };
 

@@ -261,8 +261,6 @@ void fpga_aws_read_from_cis(struct dpu_region_address_translation *tr,
 		uint64_t off_in_bar = i * 0x1000 + 0x1000000000ULL;
 
 		result = &((uint64_t *)ptr_block_data)[i];
-		if (*result == 0ULL)
-			continue;
 
 		result_tmp = readq((volatile uint8_t *)base_region_addr +
 				   off_in_bar);

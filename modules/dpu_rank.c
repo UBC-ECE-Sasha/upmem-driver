@@ -7,6 +7,7 @@
 #include <linux/cred.h>
 #include <linux/uaccess.h>
 #include <linux/mm.h>
+#include <linux/types.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <asm/cacheflush.h>
@@ -401,8 +402,8 @@ static int dpu_rank_open(struct inode *inode, struct file *filp)
 		container_of(inode->i_cdev, struct dpu_rank, cdev);
 	int ret = 0;
 
-	dev_info(&rank->dev, "opened region_id %u, rank_id %u\n",
-		 rank->region->id, rank->id_in_region);
+	dev_dbg(&rank->dev, "opened region_id %u, rank_id %u\n",
+		rank->region->id, rank->id_in_region);
 
 	filp->private_data = rank;
 
@@ -432,8 +433,8 @@ static int dpu_rank_release(struct inode *inode, struct file *filp)
 	if (!rank)
 		return 0;
 
-	dev_info(&rank->dev, "closed region_id %u, rank_id %u\n",
-		 rank->region->id, rank->id_in_region);
+	dev_dbg(&rank->dev, "closed region_id %u, rank_id %u\n",
+		rank->region->id, rank->id_in_region);
 
 	dpu_rank_free(filp);
 
@@ -744,6 +745,87 @@ err:
 	return ret;
 }
 
+void dpu_rank_probe_mcu(struct dpu_rank *rank)
+{
+	struct ec_params_osc p_osc = { .set_fck_mhz = OSC_FREQ_DONT_SET };
+	struct ec_response_osc r_osc;
+	struct ec_params_dimm_id p_dimm;
+	struct ec_response_dimm_id r_dimm;
+	struct ec_response_rank_info r_rank;
+	char ec_mcu_version[128];
+	int ret;
+
+	ret = dpu_control_interface_mcu_command(rank, EC_CMD_GET_BUILD_INFO, 0,
+						NULL, 0, ec_mcu_version,
+						sizeof(ec_mcu_version));
+	if (ret == 0) {
+		dev_dbg(&rank->dev, "MCU version: %s\n", ec_mcu_version);
+
+		strncpy(rank->mcu_version, ec_mcu_version,
+			sizeof(rank->mcu_version) - 1);
+	} else {
+		dev_warn(&rank->dev, "cannot request MCU version\n");
+	}
+
+	ret = dpu_control_interface_mcu_command(rank, EC_CMD_OSC_FREQ, 0,
+						&p_osc, sizeof(p_osc), &r_osc,
+						sizeof(r_osc));
+	if (ret == 0) {
+		dev_dbg(&rank->dev,
+			"FCK frequency %u MHz (min/max %u/%u MHz)\n",
+			r_osc.fck_mhz, r_osc.fck_min_mhz, r_osc.fck_max_mhz);
+		dev_dbg(&rank->dev, "Divider /%u = %u Mhz -> /%u = %u Mhz\n",
+			r_osc.div_max, r_osc.fck_mhz / r_osc.div_max,
+			r_osc.div_min, r_osc.fck_mhz / r_osc.div_min);
+
+		rank->fck_frequency = r_osc.fck_mhz;
+		rank->clock_division_min = r_osc.div_min;
+		rank->clock_division_max = r_osc.div_max;
+	} else {
+		dev_warn(&rank->dev,
+			 "cannot request FCK frequency / Divider from MCU\n");
+	}
+
+	p_dimm.id_index = DIMM_ID_DEV_NAME;
+	strncpy(p_dimm.id_string, dev_name(&rank->dev),
+		sizeof(p_dimm.id_string) - 1);
+	p_dimm.id_string[sizeof(p_dimm.id_string) - 1] = '\0';
+	ret = dpu_control_interface_mcu_command(
+		rank, EC_CMD_DIMM_SET_ID, 0, &p_dimm, sizeof(p_dimm), NULL, 0);
+	if (ret < 0) {
+		dev_warn(&rank->dev, "cannot inform MCU about rank name\n");
+	}
+
+	ret = dpu_control_interface_mcu_command(rank, EC_CMD_DIMM_ID, 0, NULL,
+						0, &r_dimm, sizeof(r_dimm));
+	if (ret == 0) {
+		dev_dbg(&rank->dev, "Module part number: %s S/N: %s\n",
+			r_dimm.part_number, r_dimm.serial_number);
+		dev_dbg(&rank->dev, "Device name: %s Sticker name: %s\n",
+			r_dimm.dev_name, r_dimm.pretty_name);
+
+		strncpy(rank->part_number, r_dimm.part_number,
+			sizeof(rank->part_number) - 1);
+		strncpy(rank->serial_number, r_dimm.serial_number,
+			sizeof(rank->serial_number) - 1);
+	} else {
+		dev_warn(
+			&rank->dev,
+			"cannot request part number / serial number from MCU\n");
+	}
+
+	ret = dpu_control_interface_mcu_command(rank, EC_CMD_RANK_INFO, 0, NULL,
+						0, &r_rank, sizeof(r_rank));
+	if (ret == 0) {
+		dev_dbg(&rank->dev, "Rank %u/%u\n", r_rank.rank_index,
+			r_rank.rank_total);
+
+		rank->rank_index = r_rank.rank_index;
+	} else {
+		dev_warn(&rank->dev, "cannot request rank index from MCU\n");
+	}
+}
+
 int dpu_rank_create_devices(struct device *dev, struct dpu_region *region)
 {
 	struct dpu_region_address_translation *translate;
@@ -776,12 +858,6 @@ int dpu_rank_create_devices(struct device *dev, struct dpu_region *region)
 
 	for (i = 0; i < nb_ranks; ++i) {
 		struct dpu_rank *rank = &region->ranks[i];
-		struct ec_params_osc p_osc = { .set_fck_mhz =
-						       OSC_FREQ_DONT_SET };
-		struct ec_response_osc r_osc;
-		struct ec_params_dimm_id p_dimm;
-		struct ec_response_dimm_id r_dimm;
-		char ec_mcu_version[128];
 
 		rank->id = ida_simple_get(&region->rank_ida, 0, 0, GFP_KERNEL);
 		rank->id_in_region = i;
@@ -805,81 +881,13 @@ int dpu_rank_create_devices(struct device *dev, struct dpu_region *region)
 				goto free_ranks;
 		}
 
-		memset(rank->mcu_version, 0, sizeof(rank->mcu_version));
-		ret = dpu_control_interface_mcu_command(
-			rank, EC_CMD_GET_BUILD_INFO, 0, NULL, 0, ec_mcu_version,
-			sizeof(ec_mcu_version));
-		if (ret == 0) {
-			dev_dbg(&rank->dev, "MCU version: %s\n",
-				ec_mcu_version);
-
-			strncpy(rank->mcu_version, ec_mcu_version,
-				sizeof(rank->mcu_version) - 1);
-		} else {
-			dev_warn(&rank->dev, "cannot request MCU version\n");
-		}
-
 		rank->fck_frequency = 0;
 		rank->clock_division_min = 0;
 		rank->clock_division_max = 0;
-		ret = dpu_control_interface_mcu_command(rank, EC_CMD_OSC_FREQ,
-							0, &p_osc,
-							sizeof(p_osc), &r_osc,
-							sizeof(r_osc));
-		if (ret == 0) {
-			dev_dbg(&rank->dev,
-				"FCK frequency %u MHz (min/max %u/%u MHz)\n",
-				r_osc.fck_mhz, r_osc.fck_min_mhz,
-				r_osc.fck_max_mhz);
-			dev_dbg(&rank->dev,
-				"Divider /%u = %u Mhz -> /%u = %u Mhz\n",
-				r_osc.div_max, r_osc.fck_mhz / r_osc.div_max,
-				r_osc.div_min, r_osc.fck_mhz / r_osc.div_min);
-
-			rank->fck_frequency = r_osc.fck_mhz;
-			rank->clock_division_min = r_osc.div_min;
-			rank->clock_division_max = r_osc.div_max;
-		} else {
-			dev_warn(
-				&rank->dev,
-				"cannot request FCK frequency / Divider from MCU\n");
-		}
-
-		p_dimm.id_index = DIMM_ID_DEV_NAME;
-		strncpy(p_dimm.id_string, dev_name(&rank->dev),
-			sizeof(p_dimm.id_string) - 1);
-		p_dimm.id_string[sizeof(p_dimm.id_string) - 1] = '\0';
-		ret = dpu_control_interface_mcu_command(rank,
-							EC_CMD_DIMM_SET_ID, 0,
-							&p_dimm, sizeof(p_dimm),
-							NULL, 0);
-		if (ret < 0) {
-			dev_warn(&rank->dev,
-				 "cannot inform MCU about rank name\n");
-		}
-
+		rank->rank_index = -1;
+		memset(rank->mcu_version, 0, sizeof(rank->mcu_version));
 		memset(rank->part_number, 0, sizeof(rank->part_number));
 		memset(rank->serial_number, 0, sizeof(rank->serial_number));
-		ret = dpu_control_interface_mcu_command(rank, EC_CMD_DIMM_ID, 0,
-							NULL, 0, &r_dimm,
-							sizeof(r_dimm));
-		if (ret == 0) {
-			dev_dbg(&rank->dev,
-				"Module part number: %20s  S/N:  %8s\n",
-				r_dimm.part_number, r_dimm.serial_number);
-			dev_dbg(&rank->dev,
-				"Device name: %32s Sticker name %16s\n",
-				r_dimm.dev_name, r_dimm.pretty_name);
-
-			strncpy(rank->part_number, r_dimm.part_number,
-				sizeof(rank->part_number) - 1);
-			strncpy(rank->serial_number, r_dimm.serial_number,
-				sizeof(rank->serial_number) - 1);
-		} else {
-			dev_warn(
-				&rank->dev,
-				"cannot request part number / serial number from MCU\n");
-		}
 
 		rank->init_done = 1;
 	}
